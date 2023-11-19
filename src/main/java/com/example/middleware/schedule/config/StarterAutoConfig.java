@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Configuration;
  */
 // 使StarterServiceProperties类生效
 @EnableConfigurationProperties(StarterServiceProperties.class)
-@Configuration("example-middleware-schedule-starterAutoConfig")
+@Configuration("middleware-mySchedule-starterAutoConfig")
 public class StarterAutoConfig {
 
     // 将配置文件的内容注入进来

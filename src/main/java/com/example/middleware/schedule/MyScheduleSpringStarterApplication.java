@@ -10,6 +10,7 @@ public class MyScheduleSpringStarterApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(MyScheduleSpringStarterApplication.class, args);
+        while (true);
     }
 
 }

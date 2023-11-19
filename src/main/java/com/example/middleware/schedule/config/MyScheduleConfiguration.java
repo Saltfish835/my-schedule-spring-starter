@@ -6,6 +6,9 @@ import com.example.middleware.schedule.common.Constants;
 import com.example.middleware.schedule.domain.task.CronMethodTask;
 import com.example.middleware.schedule.domain.task.SimpleMethodTask;
 import com.example.middleware.schedule.domain.task.base.BaseTask;
+import com.example.middleware.schedule.domain.task.base.MethodTask;
+import com.example.middleware.schedule.service.taskService.SchedulingRunnable;
+import com.example.middleware.schedule.service.taskService.TaskRegister;
 import com.example.middleware.schedule.service.ZkCuratorServer;
 import org.apache.curator.framework.CuratorFramework;
 import org.slf4j.Logger;
@@ -82,7 +85,7 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
                 continue;
             }
             // 当前这个方法的头上有Schedule相关的注解
-            List<BaseTask> taskList = Constants.execOrderMap.computeIfAbsent(beanName, k -> new ArrayList<>());
+            List<MethodTask> taskList = Constants.execOrderMap.computeIfAbsent(beanName, k -> new ArrayList<>());
             // 从注解中获取描述信息，封装定时任务
             if(cronSchedule != null) {
                 // 当前是cron任务
@@ -126,6 +129,8 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
         initConfig(applicationContext);
         // 初始化服务
         initServer(applicationContext);
+        // 启动这个项目中包含的定时任务
+        initTask(applicationContext);
     }
 
     /**
@@ -137,7 +142,7 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
         try {
             // 获取配置文件
             StarterServiceProperties properties = applicationContext
-                    .getBean("example-middleware-schedule-starterAutoConfig", StarterAutoConfig.class).getProperties();
+                    .getBean("middleware-mySchedule-starterAutoConfig", StarterAutoConfig.class).getProperties();
             // 拿到配置文件中的信息，并保存到全局常量中
             Constants.Global.zkAddress = properties.getZkAddress();
             InetAddress inetAddress = InetAddress.getLocalHost();
@@ -157,17 +162,34 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
             // 获取zookeeper客户端
             CuratorFramework client = ZkCuratorServer.getClient(Constants.Global.zkAddress);
             // 创建tasks节点
-            ZkCuratorServer.createNode(client, Constants.Global.path_root_tasks);
-            // 创建exec节点
-            ZkCuratorServer.createNode(client, Constants.Global.path_root_exec);
-            // 为exec节点添加监听器，来处理任务的启停
-
-
+            ZkCuratorServer.createNode(client, Constants.Global.path_root_tasks, "");
         }catch (Exception e) {
             logger.error("my schedule init server error!",e);
         }
-
     }
 
+
+    /**
+     * 初始化任务
+     * @param applicationContext
+     */
+    private void initTask(ApplicationContext applicationContext) {
+        // 获取操作控制任务启停的对象
+        final TaskRegister taskRegister = applicationContext.getBean("middleware-mySchedule-taskRegister", TaskRegister.class);
+        // 从当前项目中扫出来的任务
+        final Set<String> beanNames = Constants.execOrderMap.keySet();
+        // 遍历这个项目中包含定时任务的bean
+        for(String beanName: beanNames) {
+            // 根据beanName拿到这个bean中声明的所有任务
+            final List<MethodTask> taskList = Constants.execOrderMap.get(beanName);
+            // 遍历这个bean下的所有任务
+            for(MethodTask methodTask : taskList) {
+                // 将任务封装成Spring可以调度的形式
+                final SchedulingRunnable springTask = new SchedulingRunnable(methodTask);
+                // 使用Spring提供的TaskScheduler类来实现正在的调度执行
+                taskRegister.initSpringTask(springTask);
+            }
+        }
+    }
 
 }
