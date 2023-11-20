@@ -17,6 +17,10 @@ public class SchedulingRunnable implements Runnable{
 
     private MethodTask methodTask;
 
+    /**
+     * 需要传入标记有Schedule注解的方法
+     * @param methodTask
+     */
     public SchedulingRunnable(MethodTask methodTask) {
         this.methodTask = methodTask;
     }

@@ -5,11 +5,10 @@ import com.example.middleware.schedule.annotation.scheduleAnnotation.SimpleSched
 import com.example.middleware.schedule.common.Constants;
 import com.example.middleware.schedule.domain.task.CronMethodTask;
 import com.example.middleware.schedule.domain.task.SimpleMethodTask;
-import com.example.middleware.schedule.domain.task.base.BaseTask;
 import com.example.middleware.schedule.domain.task.base.MethodTask;
 import com.example.middleware.schedule.service.taskService.SchedulingRunnable;
 import com.example.middleware.schedule.service.taskService.TaskRegister;
-import com.example.middleware.schedule.service.ZkCuratorServer;
+import com.example.middleware.schedule.service.ZkCuratorService;
 import org.apache.curator.framework.CuratorFramework;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,7 +106,8 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
                 task.setTaskName(simpleSchedule.taskName());
                 task.setStartTime(simpleSchedule.startTime());
                 task.setDesc(simpleSchedule.desc());
-                task.setAutoStartup(true); // 简单任务只有自启
+                // 简单任务只有自启
+                task.setAutoStartup(true);
                 taskList.add(task);
             }
             // 当前这个类已经扫描过了，就记下来，避免下次被重复处理
@@ -148,7 +148,7 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
             InetAddress inetAddress = InetAddress.getLocalHost();
             Constants.Global.ip = inetAddress.getHostAddress();
         }catch (Exception e) {
-            logger.error("my schedule  init config error!",e);
+            logger.error("my schedule init config error!",e);
             throw new RuntimeException(e);
         }
     }
@@ -160,9 +160,9 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
     private void initServer(ApplicationContext applicationContext) {
         try {
             // 获取zookeeper客户端
-            CuratorFramework client = ZkCuratorServer.getClient(Constants.Global.zkAddress);
+            CuratorFramework client = ZkCuratorService.getClient(Constants.Global.zkAddress);
             // 创建tasks节点
-            ZkCuratorServer.createNode(client, Constants.Global.path_root_tasks, "");
+            ZkCuratorService.createNode(client, Constants.Global.path_root_tasks, "");
         }catch (Exception e) {
             logger.error("my schedule init server error!",e);
         }
@@ -182,7 +182,7 @@ public class MyScheduleConfiguration implements ApplicationContextAware, BeanPos
         for(String beanName: beanNames) {
             // 根据beanName拿到这个bean中声明的所有任务
             final List<MethodTask> taskList = Constants.execOrderMap.get(beanName);
-            // 遍历这个bean下的所有任务
+            // 遍历这个bean下的所有标记有Schedule注解的方法
             for(MethodTask methodTask : taskList) {
                 // 将任务封装成Spring可以调度的形式
                 final SchedulingRunnable springTask = new SchedulingRunnable(methodTask);

@@ -16,7 +16,7 @@ public abstract class BaseTask {
     protected Long runTime;
 
     // 任务状态
-    protected Integer status;
+    protected String status;
 
     // 是否自启
     protected Boolean isAutoStartup;
@@ -53,11 +53,11 @@ public abstract class BaseTask {
         this.runTime = runTime;
     }
 
-    public Integer getStatus() {
+    public String getStatus() {
         return status;
     }
 
-    public void setStatus(Integer status) {
+    public void setStatus(String status) {
         this.status = status;
     }
 }

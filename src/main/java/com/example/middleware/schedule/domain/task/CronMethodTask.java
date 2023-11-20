@@ -9,7 +9,9 @@ import com.example.middleware.schedule.domain.task.base.MethodTask;
  */
 public class CronMethodTask extends MethodTask {
 
-    // 任务的cron表达式
+    /**
+     * 任务的cron表达式
+     */
     private String cron;
 
     public String getCron() {

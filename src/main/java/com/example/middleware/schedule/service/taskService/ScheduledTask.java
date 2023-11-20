@@ -3,6 +3,7 @@ package com.example.middleware.schedule.service.taskService;
 import java.util.concurrent.ScheduledFuture;
 
 /**
+ * 已经被调度的任务
  * 保存任务调度的返回值
  */
 public class ScheduledTask {

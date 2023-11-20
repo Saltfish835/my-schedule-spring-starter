@@ -4,7 +4,9 @@ import com.example.middleware.schedule.domain.task.base.MethodTask;
 
 public class SimpleMethodTask extends MethodTask {
 
-    // 开始调度执行的时间点
+    /**
+     * 开始调度执行的时间点
+     */
     private String startTime;
 
     public String getStartTime() {

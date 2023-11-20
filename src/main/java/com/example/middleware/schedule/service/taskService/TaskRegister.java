@@ -4,7 +4,7 @@ import com.example.middleware.schedule.common.Constants;
 import com.example.middleware.schedule.domain.task.CronMethodTask;
 import com.example.middleware.schedule.domain.task.SimpleMethodTask;
 import com.example.middleware.schedule.domain.task.base.MethodTask;
-import com.example.middleware.schedule.service.ZkCuratorServer;
+import com.example.middleware.schedule.service.ZkCuratorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -42,13 +42,15 @@ public class TaskRegister implements DisposableBean {
         try{
             // 先为该任务在zookeeper创建对应的节点
             createZnodeWithTask(springTask);
-            // 如果当前任务是自启且没有leader节点，说明当前任务可以执行
+            // 将当前任务状态设置为就绪态
+            setTaskStatus(springTask,Constants.Global.PREPARED);
+            // 当前任务需要自启
             if(springTask.getMethodTask().getAutoStartup()) {
                 runSpringTask(springTask);
             }
             // 如果当前任务已经有实例在被调度执行，那么就先监听着taskName节点被移除的事件，当leader被删除，那么该任务就可以被调度执行
             // 同时监听exec节点来控制任务启停
-            ZkCuratorServer.addPathChildrenCacheForTaskName(Constants.Global.client, springTask);
+            ZkCuratorService.addPathChildrenCacheForTaskName(Constants.Global.client, springTask);
             logger.info("任务["+springTask.getMethodTask().getTaskName()+"]初始化成功");
         }catch (Exception e) {
             logger.error("middleware mySchedule init task error!",e);
@@ -72,24 +74,29 @@ public class TaskRegister implements DisposableBean {
      */
     public void runSpringTask(SchedulingRunnable springTask) {
         try {
+            // 当前任务不在本地列表中，不能调度执行
+            if(!isExistInLocal(springTask)) {
+                logger.info("任务["+springTask.getMethodTask().getTaskName()+"]不在本地列表中，不能被调度执行");
+                return;
+            }
             // 当前leader不存在，可以进行调度执行
-            if(!ZkCuratorServer.isExists(Constants.Global.client,getTaskLeaderPath(springTask))) {
+            if(!ZkCuratorService.isExists(Constants.Global.client,getTaskLeaderPath(springTask))) {
                 // 如果这个任务已经在调度列表中了，就把这个任务先清除掉
                 if(Constants.scheduledTasks.get(springTask.getMethodTask().getTaskName()) != null) {
                     removeTask(springTask.getMethodTask().getTaskName());
                 }
                 // 先在zookeeper中创建该任务对应的leader节点，代表该任务在调度执行
-                ZkCuratorServer.createEphemeralNode(Constants.Global.client,
+                ZkCuratorService.createEphemeralNode(Constants.Global.client,
                         getTaskLeaderPath(springTask),getTaskInstanceName(springTask));
                 // 然后再把任务交给Spring真正调度执行
                 ScheduledTask scheduledTask = scheduleTask(springTask);
                 // 把当前调度执行的任务记录下来
                 Constants.scheduledTasks.put(springTask.getMethodTask().getTaskName(), scheduledTask);
                 // 把当前任务设置为运行态
-                ZkCuratorServer.setData(Constants.Global.client,getTaskInstanceStatusPath(springTask),Constants.Global.RUNNING);
+                setTaskStatus(springTask,Constants.Global.RUNNING);
                 logger.info("任务["+springTask.getMethodTask().getTaskName()+"]被调度执行");
             }else {
-                logger.info("leader节点被["+ZkCuratorServer.getData(Constants.Global.client,getTaskLeaderPath(springTask))+"]注册，任务["+springTask.getMethodTask().getTaskName()+"]无法被调度执行");
+                logger.info("leader节点被["+ ZkCuratorService.getData(Constants.Global.client,getTaskLeaderPath(springTask))+"]注册，任务["+springTask.getMethodTask().getTaskName()+"]无法被调度执行");
             }
         }catch (Exception e) {
             logger.error("middleware mySchedule run task error!",e);
@@ -104,8 +111,8 @@ public class TaskRegister implements DisposableBean {
     public void restartSpringTask(SchedulingRunnable springTask) {
         try{
             // 只有占有leader节点且处于停止状态的任务才能重启
-            final String leader = ZkCuratorServer.getData(Constants.Global.client, getTaskLeaderPath(springTask));
-            final String status = ZkCuratorServer.getData(Constants.Global.client, getTaskInstanceStatusPath(springTask));
+            final String leader = ZkCuratorService.getData(Constants.Global.client, getTaskLeaderPath(springTask));
+            final String status = ZkCuratorService.getData(Constants.Global.client, getTaskInstanceStatusPath(springTask));
             if((leader != null && leader.equals(getTaskInstanceName(springTask)) && (status != null && status.equals(Constants.Global.STOPPED)))) {
                 // 从Spring中取消掉该任务
                 if(Constants.scheduledTasks.get(springTask.getMethodTask().getTaskName()) != null) {
@@ -116,7 +123,7 @@ public class TaskRegister implements DisposableBean {
                 // 把当前调度执行的任务记录下来
                 Constants.scheduledTasks.put(springTask.getMethodTask().getTaskName(), scheduledTask);
                 // 把当前任务设置为运行态
-                ZkCuratorServer.setData(Constants.Global.client,getTaskInstanceStatusPath(springTask),Constants.Global.RUNNING);
+                setTaskStatus(springTask,Constants.Global.RUNNING);
                 logger.info("任务["+springTask.getMethodTask().getTaskName()+"]重启成功");
             }else {
                 logger.warn("任务["+springTask.getMethodTask().getTaskName()+"]无法重启，当前任务的leader是["+leader+"]，当前状态是["+status+"].");
@@ -135,15 +142,15 @@ public class TaskRegister implements DisposableBean {
     public void stopSpringTask(SchedulingRunnable springTask) {
         try {
             // 当前处于运行状态的任务实例才能停止
-            final String leader = ZkCuratorServer.getData(Constants.Global.client, getTaskLeaderPath(springTask));
-            final String status = ZkCuratorServer.getData(Constants.Global.client, getTaskInstanceStatusPath(springTask));
+            final String leader = ZkCuratorService.getData(Constants.Global.client, getTaskLeaderPath(springTask));
+            final String status = ZkCuratorService.getData(Constants.Global.client, getTaskInstanceStatusPath(springTask));
             if((leader != null && leader.equals(getTaskInstanceName(springTask)) && (status != null && status.equals(Constants.Global.RUNNING)))) {
                 // 从Spring中取消掉该任务
                 if(Constants.scheduledTasks.get(springTask.getMethodTask().getTaskName()) != null) {
                     removeTask(springTask.getMethodTask().getTaskName());
                 }
                 // 把当前任务设置为停止状态
-                ZkCuratorServer.setData(Constants.Global.client,getTaskInstanceStatusPath(springTask),Constants.Global.STOPPED);
+                setTaskStatus(springTask,Constants.Global.STOPPED);
                 logger.info("当前任务["+springTask.getMethodTask().getTaskName()+"]停止成功");
             }else {
                 logger.warn("当前任务无法停止，当前任务leader是["+leader+"]，当前状态是["+status+"].");
@@ -160,24 +167,16 @@ public class TaskRegister implements DisposableBean {
      * @param springTask
      */
     public void delete(SchedulingRunnable springTask) {
-        // 如果这个任务已经在调度列表中了，就把这个任务先清除掉
-        if(Constants.scheduledTasks.get(springTask.getMethodTask().getTaskName()) != null) {
-            removeTask(springTask.getMethodTask().getTaskName());
-        }
-        // 然后把任务从项目中删除
-        List<MethodTask> methodTasks = Constants.execOrderMap.get(springTask.getMethodTask().getBeanName());
-        Iterator<MethodTask> methodTaskIterator = methodTasks.iterator();
-        while(methodTaskIterator.hasNext()) {
-            MethodTask methodTask = methodTaskIterator.next();
-            if(methodTask.getTaskName().equals(springTask.getMethodTask().getTaskName())) {
-                methodTaskIterator.remove();
-                logger.info("当前任务["+methodTask.getTaskName()+"]删除成功");
-            }
-        }
         try {
+            // 如果这个任务已经在调度列表中了，就把这个任务先清除掉
+            if(Constants.scheduledTasks.get(springTask.getMethodTask().getTaskName()) != null) {
+                removeTask(springTask.getMethodTask().getTaskName());
+            }
+            // 然后把任务从本地任务列表中删除
+            deleteTaskFromLocal(springTask);
             // 如果这个任务占有leader节点，还要把leader节点删掉
-            if(ZkCuratorServer.getData(Constants.Global.client,getTaskLeaderPath(springTask)).equals(getTaskInstanceName(springTask))) {
-                ZkCuratorServer.deleteZnode(Constants.Global.client,getTaskLeaderPath(springTask));
+            if(ZkCuratorService.getData(Constants.Global.client,getTaskLeaderPath(springTask)).equals(getTaskInstanceName(springTask))) {
+                ZkCuratorService.deleteZnode(Constants.Global.client,getTaskLeaderPath(springTask));
                 logger.info("当前任务["+springTask.getMethodTask().getTaskName()+"]占用的leader节点被删除");
             }
         }catch (Exception e) {
@@ -185,6 +184,40 @@ public class TaskRegister implements DisposableBean {
         }
     }
 
+
+    /**
+     * 从本地列表中删除任务
+     * @param springTask
+     */
+    public void deleteTaskFromLocal(SchedulingRunnable springTask) {
+        List<MethodTask> methodTasks = Constants.execOrderMap.get(springTask.getMethodTask().getBeanName());
+        Iterator<MethodTask> methodTaskIterator = methodTasks.iterator();
+        while(methodTaskIterator.hasNext()) {
+            MethodTask methodTask = methodTaskIterator.next();
+            if(methodTask.getTaskName().equals(springTask.getMethodTask().getTaskName())) {
+                methodTaskIterator.remove();
+                logger.info("从本地任务列表中删除任务["+methodTask.getTaskName()+"]成功");
+            }
+        }
+    }
+
+
+    /**
+     * 判断任务是否在本地列表中存在
+     * @param springTask
+     * @return
+     */
+    public boolean isExistInLocal(SchedulingRunnable springTask) {
+        List<MethodTask> methodTasks = Constants.execOrderMap.get(springTask.getMethodTask().getBeanName());
+        Iterator<MethodTask> methodTaskIterator = methodTasks.iterator();
+        while(methodTaskIterator.hasNext()) {
+            MethodTask methodTask = methodTaskIterator.next();
+            if(methodTask.getTaskName().equals(springTask.getMethodTask().getTaskName())) {
+                return true;
+            }
+        }
+        return false;
+    }
 
 
     /**
@@ -223,6 +256,7 @@ public class TaskRegister implements DisposableBean {
             return;
         }
         scheduledTask.cancel();
+        logger.info("从调度列表中删除任务["+taskName+"]成功");
     }
 
 
@@ -236,18 +270,34 @@ public class TaskRegister implements DisposableBean {
 
         // 将任务名称注册到zk，并生成持久化节点
         // /my_scheduler/tasks/cron_task_1
-        ZkCuratorServer.createNode(Constants.Global.client, getTaskNamePath(springTask));
+        ZkCuratorService.createNode(Constants.Global.client, getTaskNamePath(springTask));
 
         // 生成一个任务对应的持久化实例节点
         // /my_scheduler/tasks/cron_task_1/cron_task_1_192_168_122_1
-        ZkCuratorServer.createNode(Constants.Global.client, getTaskInstancePath(springTask), null);
+        ZkCuratorService.createNode(Constants.Global.client, getTaskInstancePath(springTask), null);
 
         // 生成一个任务对应的持久化命令节点，用于启停任务
         // /my_scheduler/tasks/cron_tas_1/exec
-        ZkCuratorServer.createNode(Constants.Global.client,getTaskExecPath(springTask),null);
+        ZkCuratorService.createNode(Constants.Global.client,getTaskExecPath(springTask),null);
 
-        // 在任务实例下创建一个任务状态的临时节点，且将当前任务状态设置为就绪态
-        ZkCuratorServer.createEphemeralNode(Constants.Global.client, getTaskInstanceStatusPath(springTask), Constants.Global.PREPARED);
+        // 在任务实例下创建一个任务状态的临时节点
+        ZkCuratorService.createEphemeralNode(Constants.Global.client, getTaskInstanceStatusPath(springTask), null);
+    }
+
+
+    /**
+     * 为任务设置状态
+     * @param springTask
+     * @param status
+     */
+    public void setTaskStatus(SchedulingRunnable springTask, String status) {
+        try {
+            ZkCuratorService.setData(Constants.Global.client,getTaskInstanceStatusPath(springTask),status);
+            springTask.getMethodTask().setStatus(status);
+            logger.info("任务["+springTask.getMethodTask().getTaskName()+"]被设置成["+status+"]状态");
+        } catch (Exception e) {
+            logger.error("为任务["+springTask.getMethodTask().getTaskName()+"]设置状态["+status+"]出错！",e);
+        }
     }
 
 

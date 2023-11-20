@@ -16,9 +16,9 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class Constants {
 
-    // 项目中包含的任务列表
+    // 本地任务列表 beanName - methodTaskList
     public static final Map<String, List<MethodTask>> execOrderMap = new ConcurrentHashMap<>();
-    // 正在被调度的任务列表
+    // 已经被调度的任务列表 taskName - scheduledTask
     public static final Map<String, ScheduledTask> scheduledTasks = new ConcurrentHashMap<>(16);
 
 

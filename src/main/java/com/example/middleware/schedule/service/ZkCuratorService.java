@@ -1,31 +1,24 @@
 package com.example.middleware.schedule.service;
 
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.example.middleware.schedule.common.Constants;
-import com.example.middleware.schedule.service.taskService.ScheduledTask;
 import com.example.middleware.schedule.service.taskService.SchedulingRunnable;
 import com.example.middleware.schedule.service.taskService.TaskRegister;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
-import org.apache.curator.framework.recipes.cache.NodeCache;
 import org.apache.curator.framework.recipes.cache.PathChildrenCache;
-import org.apache.curator.framework.recipes.cache.TreeCache;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.zookeeper.CreateMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationContext;
-
-import java.util.HashMap;
 
 /**
  * 操作zk的工具类
  * @author yuhe
  */
-public class ZkCuratorServer {
-    private static Logger logger = LoggerFactory.getLogger(ZkCuratorServer.class);
+public class ZkCuratorService {
+    private static Logger logger = LoggerFactory.getLogger(ZkCuratorService.class);
 
     /**
      * 获取操作zookeeper的客户端
@@ -183,7 +176,7 @@ public class ZkCuratorServer {
 
 
     /**
-     * 给taskName节点加上监听器，用于实现故障转移
+     * 给taskName节点加上监听器，用于实现故障转移和任务启停操作
      * @param client
      * @param springTask
      * @throws Exception
@@ -192,25 +185,19 @@ public class ZkCuratorServer {
         final PathChildrenCache pathChildrenCache  = new PathChildrenCache(client, TaskRegister.getTaskNamePath(springTask),true);
         pathChildrenCache .getListenable().addListener((curatorFramework, pathChildrenEvent) -> {
             String path = null;
-            final TaskRegister taskRegister = Constants.Global.applicationContext
-                    .getBean("middleware-mySchedule-taskRegister", TaskRegister.class);
+            final TaskRegister taskRegister = Constants.Global.applicationContext.getBean("middleware-mySchedule-taskRegister", TaskRegister.class);
             switch (pathChildrenEvent.getType()) {
+                /**
+                 * 1、leader临时节点被删除，代表正在运行的任务实例下线了，需要进行故障转移
+                 * 2、一个持久的任务实例节点被删除，代表任务被移除
+                 */
                 case CHILD_REMOVED:
                     path = pathChildrenEvent.getData().getPath();
-                    /**
-                     * 当前任务的leader节点被移除了
-                     * 需要进行故障转移
-                     */
                     if(path.equals(TaskRegister.getTaskLeaderPath(springTask))) {
                         // 进行故障转移
                         logger.info("节点["+path+"]被移除，需要进行故障转移");
                         taskRegister.failover(springTask);
                     }
-                    /**
-                     * 当前任务的一个实例被移除了
-                     * 需要删除在zookeeper中为其创建的节点(已经被删了)
-                     * 以及停掉任务并从全局变量中删掉
-                     */
                     if(path.equals(TaskRegister.getTaskInstancePath(springTask))) {
                         // 删除任务
                         logger.info("节点["+path+"]被移除，需要删除任务");
@@ -218,11 +205,11 @@ public class ZkCuratorServer {
                     }
                     break;
                 case CHILD_UPDATED:
-                    path = pathChildrenEvent.getData().getPath();
                     /**
                      * exec节点有更新，需要对任务实例进行操作
                      * {"task_instance":"cron_task_1_192_168_122_101","status":"3"}
                      */
+                    path = pathChildrenEvent.getData().getPath();
                     if(path.equals(TaskRegister.getTaskExecPath(springTask))) {
                         final byte[] data = pathChildrenEvent.getData().getData();
                         final JSONObject jsonObject = JSONObject.parseObject(new String(data, Constants.Global.CHARSET_NAME));
@@ -239,10 +226,14 @@ public class ZkCuratorServer {
                                     logger.info("任务["+jsonObject.get("task_instance").toString() + "]需要停止");
                                     taskRegister.stopSpringTask(springTask);
                                     break;
+                                default:
+                                    logger.info("任务["+jsonObject.get("task_instance").toString() + "]不支持此操作");
                             }
                         }
                     }
                     break;
+                default:
+                    logger.info("不处理的事件");
             }
         });
         pathChildrenCache.start();
